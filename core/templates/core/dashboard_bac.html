@@ -1,0 +1,225 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>Glucose Curve</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; }
+    h1 { margin: 0 0 12px; }
+    .row { display:flex; gap: 12px; align-items:center; flex-wrap: wrap; margin-bottom: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 12px; }
+    #popup {
+      position: fixed; left: 12px; right: 12px; bottom: 12px;
+      border: 1px solid #ddd; background: #fff; border-radius: 12px;
+      padding: 12px; display: none; box-shadow: 0 8px 32px rgba(0,0,0,.12);
+      z-index: 1000;
+    }
+    #popup .title { font-weight: 700; margin-bottom: 6px; }
+    #popup .close { float:right; cursor:pointer; padding: 4px 8px; border:1px solid #ddd; border-radius: 8px; }
+    canvas { width: 100% !important; max-height: 420px; }
+    select, input, button { padding: 8px 10px; border-radius: 10px; border: 1px solid #ccc; }
+    button { cursor: pointer; background-color: #f0f0f0; }
+  </style>
+</head>
+<body>
+  <h1>Glucose Curve</h1>
+
+  <div class="row card">
+    <label>Date:
+      <input id="date" type="date" value="{{ default_date }}">
+    </label>
+    <label>End Time:
+      <input id="time" type="time">
+    </label>
+    <label>Range:
+      <select id="range">
+        <option value="3">3 hr</option>
+        <option value="6" selected>6 hr</option>
+        <option value="12">12 hr</option>
+        <option value="24">24 hr</option>
+      </select>
+    </label>
+    <button id="load">Load</button>
+  </div>
+
+  <div class="card">
+    <div style="height: 420px; position: relative;">
+      <canvas id="chart"></canvas>
+    </div>
+  </div>
+
+  <div id="popup">
+    <span class="close" id="popupClose">Close</span>
+    <div class="title" id="popupTitle"></div>
+    <div id="popupBody"></div>
+  </div>
+
+<script>
+let chart;
+const icons = { meal: "🍽️", workout: "🏃", med: "💊", weight: "⚖️" };
+
+const customLabelPlugin = {
+  id: 'customLabels',
+  afterDatasetsDraw(chart) {
+    const { ctx } = chart;
+    
+    chart.data.datasets.forEach((dataset, dsIndex) => {
+      if (dataset.type !== 'scatter') return;
+
+      const meta = chart.getDatasetMeta(dsIndex);
+      meta.data.forEach((element, index) => {
+        if (element.skip) return;
+
+        const dataPoint = dataset.data[index];
+        if (dataPoint && dataPoint._meta) {
+          const { x, y } = element.getProps(['x', 'y'], true);
+          const metaData = dataPoint._meta;
+          const kind = metaData.kind;
+          
+          let icon = icons[kind];
+          let text = "";
+
+          if (kind === 'meal') {
+            const m = metaData.m;
+            // Include Template Name + Carbs
+            text = `${m.meal_template_name} | ${m.total_carbs_g}g Carbs`;
+          } 
+          else if (kind === 'workout') {
+            const w = metaData.w;
+            text = `${w.activity_type} (${Math.round(w.duration_min)}m)`;
+          }
+          else if (kind === 'med') {
+            text = metaData.m.label;
+          }
+
+          ctx.save();
+          ctx.font = '12px system-ui';
+          ctx.textBaseline = 'middle';
+          
+          ctx.textAlign = 'center';
+          ctx.fillText(icon, x, y);
+
+          if (text) {
+            ctx.textAlign = 'left';
+            ctx.fillStyle = '#444';
+            ctx.fillText(text, x + 12, y);
+          }
+          ctx.restore();
+        }
+      });
+    });
+  }
+};
+
+function showPopup(title, html) {
+  document.getElementById("popupTitle").textContent = title;
+  document.getElementById("popupBody").innerHTML = html;
+  document.getElementById("popup").style.display = "block";
+}
+document.getElementById("popupClose").onclick = () => document.getElementById("popup").style.display = "none";
+
+async function loadData() {
+  const dateVal = document.getElementById("date").value;
+  const rangeVal = document.getElementById("range").value;
+  const timeVal = document.getElementById("time").value;
+
+  let url = `/api/timeline/?date=${encodeURIComponent(dateVal)}&range_hours=${encodeURIComponent(rangeVal)}`;
+  if (timeVal) url += `&start_time=${encodeURIComponent(timeVal)}`;
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    if (!data.ok) return alert("Error: " + data.error);
+
+    const egv = data.egv.map(p => ({ x: new Date(p.t), y: p.y }));
+    const yMax = egv.length ? Math.max(...egv.map(p => p.y)) : 180;
+    const yTop = yMax + 25;
+
+    if (chart) chart.destroy();
+    chart = new Chart(document.getElementById("chart"), {
+      type: "line",
+      data: {
+        datasets: [
+          {
+            label: "EGV",
+            data: egv,
+            pointRadius: 2,
+            tension: 0.2,
+            borderColor: '#36a2eb',
+            borderWidth: 2,
+            fill: false
+          },
+          {
+            label: "Meals",
+            type: "scatter",
+            pointRadius: 0,
+            pointHitRadius: 15,
+            data: data.meals.map(m => ({ x: new Date(m.eaten_at), y: yTop - 5, _meta: { kind:"meal", m } }))
+          },
+          {
+            label: "Workouts",
+            type: "scatter",
+            pointRadius: 0,
+            pointHitRadius: 15,
+            data: data.workouts.map(w => ({ x: new Date(w.start_at), y: yTop - 20, _meta: { kind:"workout", w } }))
+          },
+          {
+            label: "Meds",
+            type: "scatter",
+            pointRadius: 0,
+            pointHitRadius: 15,
+            data: data.medications.map(m => ({ x: new Date(m.taken_at), y: yTop - 35, _meta: { kind:"med", m } }))
+          }
+        ]
+      },
+      plugins: [customLabelPlugin],
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        layout: { padding: { top: 30, right: 120 } },
+        scales: {
+          x: { 
+            type: "time", 
+            min: new Date(data.start), 
+            max: new Date(data.end),
+            time: {
+                unit: 'hour',
+                stepSize: 1,
+                displayFormats: { hour: 'h a' },
+                tooltipFormat: 'h:mm a'
+            }
+          },
+          y: { 
+            suggestedMin: 60, 
+            suggestedMax: yTop + 10,
+            title: { display: true, text: 'mg/dL' }
+          }
+        },
+        plugins: {
+          legend: { display: false }
+        },
+        onClick: (e, el) => {
+          if (!el.length) return;
+          const dsIndex = el[0].datasetIndex;
+          const index = el[0].index;
+          const pt = chart.data.datasets[dsIndex].data[index];
+          if (pt._meta) {
+              const m = pt._meta;
+              if (m.kind === 'meal') showPopup("Meal", `<b>${m.m.meal_template_name}</b><br>${m.m.total_carbs_g}g Carbs`);
+              if (m.kind === 'med') showPopup("Medication", `<b>${m.m.label}</b><br>${m.m.notes}`);
+              if (m.kind === 'workout') showPopup("Workout", `<b>${m.m.activity_type}</b><br>${m.m.duration_min} mins`);
+          }
+        }
+      }
+    });
+  } catch (e) { console.error(e); }
+}
+
+document.getElementById("load").onclick = loadData;
+window.onload = loadData;
+</script>
+</body>
+</html>
