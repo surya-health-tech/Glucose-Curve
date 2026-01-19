@@ -28,6 +28,7 @@
     button { cursor: pointer; background-color: #007aff; color: white; border: none; font-weight: 600; padding: 8px 16px; }
     button:hover { background-color: #0056b3; }
 
+    /* Sleep Legend Styling */
     .sleep-legend {
       display: flex;
       justify-content: center;
@@ -74,6 +75,7 @@
 
 <script>
 let chart;
+// Added "med" icon here
 const icons = { meal: "🍽️", workout: "🏃", exercise: "💪", med: "💊", weight: "⚖️" };
 
 const sleepColors = {
@@ -103,6 +105,7 @@ const customLabelPlugin = {
           ctx.textAlign = 'center';
           ctx.fillText(icons[kind], x, y);
 
+          // Sub-labels for items
           ctx.font = 'bold 10px system-ui';
           ctx.fillStyle = '#444';
           ctx.textAlign = 'left';
@@ -110,12 +113,15 @@ const customLabelPlugin = {
           let labelText = "";
           if (kind === 'meal') labelText = `${metaData.m.meal_template_name} (${metaData.m.total_carbs_g}g)`;
           if (kind === 'workout') labelText = `${metaData.w.activity_type} (${Math.round(metaData.w.duration_min)}m)`;
+          
           if (kind === 'exercise') {
-              // DEBUG: Log when an exercise label is being rendered
-              console.log("Rendering Label for:", metaData.ex.name);
               const weightVal = parseFloat(metaData.ex.weight_kg);
               const weightText = weightVal > 0 ? ` @ ${weightVal}kg` : "";
               labelText = `${metaData.ex.name}: ${metaData.ex.reps} reps${weightText}`;
+          }
+
+          if (kind === 'med') {
+              labelText = `${metaData.m.label} (${metaData.m.dose_mg}mg)`;
           }
 
           if (labelText) ctx.fillText(labelText, x + 12, y + 3);
@@ -161,18 +167,14 @@ async function loadData() {
   try {
     const resp = await fetch(url);
     const data = await resp.json();
-
-    // DEBUG: Check what the server actually sent
-    console.log("Full API Response:", data);
-    console.log("Exercise Sets Count:", data.exercise_sets ? data.exercise_sets.length : 0);
-    
     if (!data.ok) return alert("Error: " + data.error);
 
     const egv = data.egv.map(p => ({ x: new Date(p.t), y: p.y }));
-   // FIX: Fallback to 150 if no glucose data exists in the window
+    // FIX: Fallback to 150 if no glucose data exists in the window
     const yMax = egv.length ? Math.max(...egv.map(p => p.y)) : 150;
     const yTop = yMax + 25;
 
+    // 1. Map Sleep Data to Annotations
     const sleepAnnotations = {};
     if (data.sleep) {
       data.sleep.forEach((s, idx) => {
@@ -183,13 +185,13 @@ async function loadData() {
           xMax: new Date(s.end),
           backgroundColor: sleepColors[stageKey] || "rgba(200,200,200,0.1)",
           borderWidth: 0,
-          drawTime: 'beforeDatasetsDraw'
+          drawTime: 'beforeDatasetsDraw' // Shading behind the glucose line
         };
       });
       generateSleepLegend();
     }
 
-if (chart) chart.destroy();
+    if (chart) chart.destroy();
     chart = new Chart(document.getElementById("chart"), {
       data: {
         datasets: [
@@ -206,18 +208,26 @@ if (chart) chart.destroy();
           {
             label: "Meals",
             type: "scatter",
+            // Tier 1
             data: data.meals.map(m => ({ x: new Date(m.eaten_at), y: yTop, _meta: { kind:"meal", m } }))
           },
           {
             label: "Workouts",
             type: "scatter",
+            // Tier 2
             data: data.workouts.map(w => ({ x: new Date(w.start_at), y: yTop - 18, _meta: { kind:"workout", w } }))
           },
           {
             label: "Exercise Sets",
             type: "scatter",
-            // This maps your exercise_sets to the third vertical tier (yTop - 36)
+            // Tier 3
             data: (data.exercise_sets || []).map(ex => ({ x: new Date(ex.t), y: yTop - 36, _meta: { kind:"exercise", ex } }))
+          },
+          {
+            label: "Meds",
+            type: "scatter",
+            // Tier 4 (New Medication Dataset)
+            data: (data.medications || []).map(m => ({ x: new Date(m.taken_at), y: yTop - 54, _meta: { kind:"med", m } }))
           }
         ]
       },
@@ -245,9 +255,9 @@ if (chart) chart.destroy();
           if (pt._meta) {
               const m = pt._meta;
               if (m.kind === 'meal') showPopup("Meal", `<b>${m.m.meal_template_name}</b><br>${m.m.total_carbs_g}g Carbs`);
-              // FIXED TYPO: changed m.m.activity_type to m.w.activity_type
               if (m.kind === 'workout') showPopup("Workout", `<b>${m.w.activity_type}</b><br>${m.w.duration_min} mins`);
               if (m.kind === 'exercise') showPopup("Exercise", `<b>${m.ex.name}</b><br>${m.ex.reps} reps`);
+              if (m.kind === 'med') showPopup("Medication", `<b>${m.m.label}</b><br>${m.m.dose_mg}mg<br>${m.m.notes || ''}`);
           }
         }
       }
