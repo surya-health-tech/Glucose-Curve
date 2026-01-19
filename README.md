@@ -1,1 +1,2 @@
-<img width="2048" height="1365" alt="Glucose Curve" src="https://github.com/user-attachments/assets/84fbabd7-e791-43c9-b0fa-c7414103360c" />
+
+<img width="2434" height="1623" alt="Glucose Curve2" src="https://github.com/user-attachments/assets/e95b4248-cd01-4b93-83ab-d4e317be4f3d" />
