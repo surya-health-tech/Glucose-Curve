@@ -75,7 +75,6 @@
 
 <script>
 let chart;
-// Added "med" icon here
 const icons = { meal: "🍽️", workout: "🏃", exercise: "💪", med: "💊", weight: "⚖️" };
 
 const sleepColors = {
@@ -92,17 +91,35 @@ const customLabelPlugin = {
     chart.data.datasets.forEach((dataset, dsIndex) => {
       if (dataset.type !== 'scatter') return;
       const meta = chart.getDatasetMeta(dsIndex);
+      
+      // VARIABLES TO TRACK OVERLAP
+      let lastX = -999; 
+      let staggerY = 0; 
+
       meta.data.forEach((element, index) => {
         if (element.skip) return;
         const dataPoint = dataset.data[index];
         if (dataPoint && dataPoint._meta) {
           const { x, y } = element.getProps(['x', 'y'], true);
+          
+          // --- STAGGER LOGIC START ---
+          // If the current icon is within 60px of the last one, move text down
+          if (Math.abs(x - lastX) < 60) {
+             staggerY += 12; // Shift down by 12px
+          } else {
+             staggerY = 0;   // Reset if far enough apart
+          }
+          lastX = x;
+          // --- STAGGER LOGIC END ---
+
           const metaData = dataPoint._meta;
           const kind = metaData.kind;
           
           ctx.save();
           ctx.font = '16px system-ui';
           ctx.textAlign = 'center';
+          
+          // Draw Icon (Icon always stays at original Y)
           ctx.fillText(icons[kind], x, y);
 
           // Sub-labels for items
@@ -124,7 +141,10 @@ const customLabelPlugin = {
               labelText = `${metaData.m.label} (${metaData.m.dose_mg}mg)`;
           }
 
-          if (labelText) ctx.fillText(labelText, x + 12, y + 3);
+          if (labelText) {
+             // Apply the staggerY offset to the text ONLY
+             ctx.fillText(labelText, x + 12, y + 3 + staggerY);
+          }
           ctx.restore();
         }
       });
@@ -170,7 +190,6 @@ async function loadData() {
     if (!data.ok) return alert("Error: " + data.error);
 
     const egv = data.egv.map(p => ({ x: new Date(p.t), y: p.y }));
-    // FIX: Fallback to 150 if no glucose data exists in the window
     const yMax = egv.length ? Math.max(...egv.map(p => p.y)) : 150;
     const yTop = yMax + 25;
 
@@ -185,7 +204,7 @@ async function loadData() {
           xMax: new Date(s.end),
           backgroundColor: sleepColors[stageKey] || "rgba(200,200,200,0.1)",
           borderWidth: 0,
-          drawTime: 'beforeDatasetsDraw' // Shading behind the glucose line
+          drawTime: 'beforeDatasetsDraw' 
         };
       });
       generateSleepLegend();
@@ -208,25 +227,21 @@ async function loadData() {
           {
             label: "Meals",
             type: "scatter",
-            // Tier 1
             data: data.meals.map(m => ({ x: new Date(m.eaten_at), y: yTop, _meta: { kind:"meal", m } }))
           },
           {
             label: "Workouts",
             type: "scatter",
-            // Tier 2
             data: data.workouts.map(w => ({ x: new Date(w.start_at), y: yTop - 18, _meta: { kind:"workout", w } }))
           },
           {
             label: "Exercise Sets",
             type: "scatter",
-            // Tier 3
             data: (data.exercise_sets || []).map(ex => ({ x: new Date(ex.t), y: yTop - 36, _meta: { kind:"exercise", ex } }))
           },
           {
             label: "Meds",
             type: "scatter",
-            // Tier 4 (New Medication Dataset)
             data: (data.medications || []).map(m => ({ x: new Date(m.taken_at), y: yTop - 54, _meta: { kind:"med", m } }))
           }
         ]
