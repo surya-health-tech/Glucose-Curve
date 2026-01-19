@@ -15,6 +15,7 @@ final class APIClient {
     private init() {}
 
     // MARK: - GET Meal Templates
+    //test
     func getMealTemplates() async throws -> [MealTemplate] {
         guard let url = URL(string: "\(baseURL)/api/meal-templates/") else { throw APIError.badURL }
         let (data, _) = try await URLSession.shared.data(for: URLRequest(url: url))
