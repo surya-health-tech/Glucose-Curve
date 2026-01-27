@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+
+# datasets / artifacts
+artifacts/
+*.joblib
+*.pkl
+*.csv
+*.parquet
+
+# notebooks
+.ipynb_checkpoints/
