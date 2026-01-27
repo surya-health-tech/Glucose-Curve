@@ -1,0 +1,304 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8"/>
+  <title>EGV Metrics Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3"></script>
+  
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 16px; background-color: #f8f9fa; }
+    h1 { margin: 0 0 12px; font-size: 24px; color: #333; }
+    .row { display:flex; gap: 12px; align-items:center; flex-wrap: wrap; margin-bottom: 12px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 16px; }
+    .metric-card { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; }
+    .metric-item { padding: 16px; background: #f8f9fa; border-radius: 8px; }
+    .metric-label { font-size: 14px; color: #666; margin-bottom: 8px; font-weight: 500; }
+    .metric-value { font-size: 32px; font-weight: 700; color: #007aff; }
+    .metric-unit { font-size: 14px; color: #999; margin-left: 4px; }
+    .metric-detail { font-size: 14px; color: #666; margin-top: 4px; }
+    select, input, button { padding: 8px 10px; border-radius: 10px; border: 1px solid #ccc; font-size: 14px; }
+    button { cursor: pointer; background-color: #007aff; color: white; border: none; font-weight: 600; padding: 8px 16px; }
+    button:hover { background-color: #0056b3; }
+    .peaks-table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    .peaks-table th, .peaks-table td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }
+    .peaks-table th { background: #f8f9fa; font-weight: 600; }
+    .peaks-table tr:hover { background: #f8f9fa; }
+    .loading { text-align: center; padding: 40px; color: #666; }
+    .error { color: #d32f2f; padding: 12px; background: #ffebee; border-radius: 8px; margin-bottom: 16px; }
+    .section-title { font-size: 18px; font-weight: 600; margin: 24px 0 12px 0; color: #333; }
+    canvas { width: 100% !important; max-height: 420px; }
+    .chart-legend { display:flex; gap: 16px; align-items:center; flex-wrap: wrap; margin-top: 10px; color:#666; font-size: 13px; }
+    .legend-swatch { width: 14px; height: 14px; border-radius: 4px; display:inline-block; margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <h1>EGV Metrics Dashboard</h1>
+
+  <div class="row card">
+    <label>Date: <input id="date" type="date" value="{{ default_date }}"></label>
+    <label>End Time: <input id="time" type="time"></label>
+    <label>Range:
+      <select id="range">
+        <option value="6">6 hr</option>
+        <option value="12">12 hr</option>
+        <option value="24" selected>24 hr</option>
+        <option value="48">48 hr</option>
+        <option value="72">72 hr</option>
+      </select>
+    </label>
+    <button id="load">Load Metrics</button>
+  </div>
+
+  <div id="chartCard" class="card" style="display:none;">
+    <div style="height: 420px; position: relative;">
+      <canvas id="chart"></canvas>
+    </div>
+    <div class="chart-legend">
+      <span><span class="legend-swatch" style="background: rgba(0,122,255,0.14);"></span>AUC (area under curve)</span>
+      <span><span class="legend-swatch" style="background: rgba(255,149,0,0.18);"></span>IAUC (area above baseline)</span>
+      <span><span class="legend-swatch" style="background: rgba(255,149,0,0.7);"></span>IAUC baseline</span>
+    </div>
+  </div>
+
+  <div id="error" class="error" style="display: none;"></div>
+
+  <div id="metrics" class="card" style="display: none;">
+    <h2 style="margin-top: 0;">Key Metrics</h2>
+    <div class="metric-card">
+      <div class="metric-item">
+        <div class="metric-label">Time in Range (70-180 mg/dL)</div>
+        <div class="metric-value" id="tir-percentage">-</div>
+        <div class="metric-detail">
+          <span id="tir-minutes">-</span> minutes in range
+        </div>
+      </div>
+      
+      <div class="metric-item">
+        <div class="metric-label">Glucose Management Indicator (GMI)</div>
+        <div class="metric-value" id="gmi-value">-</div>
+        <div class="metric-detail">
+          Estimated A1C: <span id="gmi-a1c">-</span>%<br>
+          Mean Glucose: <span id="gmi-mean">-</span> mg/dL
+        </div>
+      </div>
+      
+      <div class="metric-item">
+        <div class="metric-label">Area Under Curve</div>
+        <div class="metric-value" id="auc-value">-</div>
+        <div class="metric-detail" id="auc-unit">mg/dL * minutes</div>
+      </div>
+      
+      <div class="metric-item">
+        <div class="metric-label">Incremental AUC</div>
+        <div class="metric-value" id="iauc-value">-</div>
+        <div class="metric-detail">
+          Baseline: <span id="iauc-baseline">-</span> mg/dL
+        </div>
+      </div>
+    </div>
+
+    <div class="section-title">Post-Meal Peak Glucose</div>
+    <table class="peaks-table" id="peaks-table">
+      <thead>
+        <tr>
+          <th>Meal</th>
+          <th>Meal Time</th>
+          <th>Peak Glucose</th>
+          <th>Peak Time</th>
+          <th>Time to Peak</th>
+        </tr>
+      </thead>
+      <tbody id="peaks-body">
+      </tbody>
+    </table>
+    <div id="no-peaks" style="text-align: center; padding: 20px; color: #666; display: none;">
+      No meals found in the selected time range.
+    </div>
+  </div>
+
+  <div id="loading" class="loading" style="display: none;">Loading metrics...</div>
+
+<script>
+let chart;
+
+function renderChart(egv, iaucBaseline) {
+  const pts = (egv || []).map(p => ({ x: new Date(p.t), y: p.y }));
+  if (!pts.length) {
+    if (chart) { chart.destroy(); chart = null; }
+    document.getElementById("chartCard").style.display = "none";
+    return;
+  }
+
+  const yMax = Math.max(...pts.map(p => p.y));
+  const baseline = Number.isFinite(iaucBaseline) ? iaucBaseline : pts[0].y;
+
+  const baseline0 = pts.map(p => ({ x: p.x, y: 0 }));
+  const baselineLine = pts.map(p => ({ x: p.x, y: baseline }));
+  const clippedToBaseline = pts.map(p => ({ x: p.x, y: Math.max(p.y, baseline) }));
+
+  if (chart) chart.destroy();
+
+  chart = new Chart(document.getElementById("chart"), {
+    type: "line",
+    data: {
+      datasets: [
+        // 0) Baseline at 0 (hidden, used as fill target)
+        {
+          label: "0 baseline",
+          data: baseline0,
+          borderWidth: 0,
+          pointRadius: 0
+        },
+        // 1) AUC shaded area (fill to origin)
+        {
+          label: "AUC",
+          data: pts,
+          borderWidth: 0,
+          pointRadius: 0,
+          tension: 0.3,
+          backgroundColor: "rgba(0,122,255,0.14)",
+          fill: { target: "origin" }
+        },
+        // 2) Glucose curve
+        {
+          label: "Glucose",
+          data: pts,
+          borderColor: "#007aff",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: false
+        },
+        // 3) IAUC baseline
+        {
+          label: "IAUC baseline",
+          data: baselineLine,
+          borderColor: "rgba(255,149,0,0.7)",
+          borderDash: [6, 4],
+          borderWidth: 1,
+          pointRadius: 0,
+          tension: 0,
+          fill: false
+        },
+        // 4) IAUC shaded area: fill only where above baseline
+        {
+          label: "IAUC",
+          data: clippedToBaseline,
+          borderWidth: 0,
+          pointRadius: 0,
+          tension: 0.3,
+          fill: { target: 3, above: "rgba(255,149,0,0.18)", below: "rgba(0,0,0,0)" }
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { display: true }
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "hour", displayFormats: { hour: "h a" } }
+        },
+        y: {
+          beginAtZero: true,
+          suggestedMax: yMax + 30,
+          title: { display: true, text: "mg/dL" }
+        }
+      }
+    }
+  });
+
+  document.getElementById("chartCard").style.display = "block";
+}
+
+async function loadMetrics() {
+  const dateVal = document.getElementById("date").value;
+  const rangeVal = document.getElementById("range").value;
+  const timeVal = document.getElementById("time").value;
+
+  let url = `/api/metrics/?date=${encodeURIComponent(dateVal)}&range_hours=${encodeURIComponent(rangeVal)}`;
+  if (timeVal) url += `&start_time=${encodeURIComponent(timeVal)}`;
+
+  document.getElementById("error").style.display = "none";
+  document.getElementById("metrics").style.display = "none";
+  document.getElementById("chartCard").style.display = "none";
+  document.getElementById("loading").style.display = "block";
+
+  try {
+    const resp = await fetch(url);
+    const data = await resp.json();
+    
+    if (!data.ok) {
+      document.getElementById("error").textContent = "Error: " + data.error;
+      document.getElementById("error").style.display = "block";
+      return;
+    }
+
+    const m = data.metrics;
+    
+    // Time in Range
+    document.getElementById("tir-percentage").textContent = m.time_in_range.percentage.toFixed(1) + "%";
+    document.getElementById("tir-minutes").textContent = 
+      `${m.time_in_range.minutes_in_range.toFixed(1)} / ${m.time_in_range.total_minutes.toFixed(1)}`;
+    
+    // GMI
+    document.getElementById("gmi-value").textContent = m.gmi.gmi.toFixed(2) + "%";
+    document.getElementById("gmi-a1c").textContent = m.gmi.estimated_a1c.toFixed(2);
+    document.getElementById("gmi-mean").textContent = m.gmi.mean_glucose.toFixed(1);
+    
+    // AUC
+    document.getElementById("auc-value").textContent = m.area_under_curve.auc.toFixed(1);
+    
+    // IAUC
+    document.getElementById("iauc-value").textContent = m.incremental_auc.iauc.toFixed(1);
+    document.getElementById("iauc-baseline").textContent = m.incremental_auc.baseline.toFixed(1);
+
+    // EGV chart w/ AUC + IAUC shading
+    renderChart(data.egv, m.incremental_auc.baseline);
+    
+    // Post-meal peaks
+    const peaksBody = document.getElementById("peaks-body");
+    peaksBody.innerHTML = "";
+    
+    if (m.post_meal_peaks.length === 0) {
+      document.getElementById("no-peaks").style.display = "block";
+      document.getElementById("peaks-table").style.display = "none";
+    } else {
+      document.getElementById("no-peaks").style.display = "none";
+      document.getElementById("peaks-table").style.display = "table";
+      m.post_meal_peaks.forEach(peak => {
+        const row = document.createElement("tr");
+        const mealTime = new Date(peak.meal_time);
+        const peakTime = new Date(peak.peak_time);
+        
+        row.innerHTML = `
+          <td>${peak.meal_name}</td>
+          <td>${mealTime.toLocaleTimeString()}</td>
+          <td><strong>${peak.peak_glucose}</strong> mg/dL</td>
+          <td>${peakTime.toLocaleTimeString()}</td>
+          <td>${peak.time_to_peak_minutes.toFixed(0)} min</td>
+        `;
+        peaksBody.appendChild(row);
+      });
+    }
+    
+    document.getElementById("metrics").style.display = "block";
+  } catch (e) {
+    document.getElementById("error").textContent = "Error loading metrics: " + e.message;
+    document.getElementById("error").style.display = "block";
+  } finally {
+    document.getElementById("loading").style.display = "none";
+  }
+}
+
+document.getElementById("load").onclick = loadMetrics;
+window.onload = loadMetrics;
+</script>
+</body>
+</html>

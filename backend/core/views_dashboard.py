@@ -10,3 +10,12 @@ def dashboard(request):
         "default_range": 6,
     }
     return render(request, "core/dashboard.html", ctx)
+
+@require_GET
+def metrics_dashboard(request):
+    # default: today, 24 hours
+    ctx = {
+        "default_date": timezone.localdate().isoformat(),
+        "default_range": 24,
+    }
+    return render(request, "core/metrics_dashboard.html", ctx)
